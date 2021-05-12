@@ -3,10 +3,12 @@
 Основано на
 **A Unified MRC Framework for Named Entity Recognition** <br>
 Xiaoya Li, Jingrong Feng, Yuxian Meng, Qinghong Han, Fei Wu and Jiwei Li<br>
-In ACL 2020. [Статья](https://arxiv.org/abs/1910.11476) и соответствующем [репозитории](https://github.com/ShannonAI/mrc-for-flat-nested-ner), <br>
+In ACL 2020. ([Статья](https://arxiv.org/abs/1910.11476)) и соответствующем [репозитории](https://github.com/ShannonAI/mrc-for-flat-nested-ner), 
+<br>
+<br>
 а также
 **Adaptation of Deep Bidirectional Multilingual Transformers for Russian Language** <br>
-Yuri Kuratov, Mikhail Arkhipov [Статья](https://arxiv.org/abs/1905.07213)
+Yuri Kuratov, Mikhail Arkhipov ([Статья](https://arxiv.org/abs/1905.07213))
 и самой [модели](https://huggingface.co/DeepPavlov/rubert-base-cased).<br>
 
 ## Установка
@@ -26,7 +28,7 @@ Yuri Kuratov, Mikhail Arkhipov [Статья](https://arxiv.org/abs/1905.07213)
 Пример:<br>
 `python .\trainer.py --bert_config_dir .\bert --data_dir .\dataset`<br>
 Еще пример:<br>
-`python .\trainer.py --pretrained_checkpoint <путь к чекпойнту> --bert_config_dir .\bert --data_dir .\data --batch_size 4 --max_epochs 1 --val_check_interval 0.25` - запуск обучения с чекпойнта на основе bert и данных data с размером минибатчей в 4, одной эпохой и валидирования каждые 0.25 батчей одной эпохи. 
+`python .\trainer.py --pretrained_checkpoint <путь к чекпойнту> --bert_config_dir .\bert `<br>`--data_dir .\data --batch_size 4 --max_epochs 1 --val_check_interval 0.25` - запуск обучения с чекпойнта на основе bert и данных data с размером минибатчей в 4, одной эпохой и валидирования каждые 0.25 батчей одной эпохи. 
 
 Все остальные параметры (выходную директорию, гиперпараметры модели, ...) можно узнать, <br>вызвав справку `--help`.
 

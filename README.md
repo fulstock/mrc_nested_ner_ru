@@ -1,4 +1,4 @@
-# A Unified MRC Framework for Named Entity Recognition (RU rework)
+# A Unified MRC Framework for Nested Named Entity Recognition (RU rework)
 
 Основано на
 **A Unified MRC Framework for Named Entity Recognition** <br>
@@ -23,7 +23,7 @@ Yuri Kuratov, Mikhail Arkhipov ([Статья](https://arxiv.org/abs/1905.07213)
 Для минимального запуска требуется указать директорию с моделью и директорию с данными <br>
 через `--bert_config_dir` и `--data_dir` соответственно.
 
-Данные должны быть подготовлены в формате, предоставляемом системой **BRAT**.
+Данные должны быть подготовлены в формате, предоставляемом системой [**BRAT**](https://brat.nlplab.org/).
 
 Пример:<br>
 `python .\trainer.py --bert_config_dir .\bert --data_dir .\dataset`<br>

@@ -28,7 +28,7 @@ def test(tag_test = None):
     # Если грузим из чекпойнта
     if args.pretrained_checkpoint:
         model.load_state_dict(torch.load(args.pretrained_checkpoint, 
-                                         map_location=torch.device('cpu'))["state_dict"]) # ? Убрать бы map_location
+                                         map_location=torch.device('cpu'))["state_dict"]) 
 
     trainer = Trainer.from_argparse_args(
         args,

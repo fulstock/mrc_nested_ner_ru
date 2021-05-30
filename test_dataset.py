@@ -1,22 +1,25 @@
 # encoding: utf-8
 
-
 import os
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 from tokenizers import BertWordPieceTokenizer
-
 from torch.utils.data import DataLoader
 import torch
 
 from datasets.mrc_ner_dataset import MRCNERDataset
 from trainer import BertLabeling
 from datasets.mrc_ner_dataset import collate_to_max_length
+from utils.random_seed import set_random_seed
+
+
+def pretty_print(string, length, symbol, file):
+     print (symbol *((length - len(string)) // 2) + string + symbol *((length - len(string)) // 2), file = file)
 
 # Задать пути к модели, данным и словарю
-CHECKPOINTS = "lightning_logs/version_37/checkpoints/epoch=2_v0.ckpt"
-DATASET_PATH = "NEREL_01/test"
-VOCAB_PATH = "rubert/vocab.txt"
+CHECKPOINTS = "../../mainmodel.ckpt"
+DATASET_PATH = "../../NEREL_01/test"
+VOCAB_PATH = "for_mrc/rubert/vocab.txt"
 
 set_random_seed(0)
 
@@ -47,16 +50,18 @@ dataset = MRCNERDataset(dataset_path=DATASET_PATH,
 
 dataloader = DataLoader(
         dataset=dataset,
-        batch_size=16,
+        batch_size=1, # батчи по одному примеру для вывода
         shuffle=False,
         collate_fn=collate_to_max_length
     )
 
 model.eval()
 
-# batch_num = 0
+f = open("test_dataset.out", "w", encoding = "utf-8") # Вывод в файл
 
-example_num = 0 # для демонстрации выводится лишь первый пример из каждого батча. 
+batch_num = 0
+
+example_num = 0 # выбор номера батча => для батча размером 1 выводятся все примеры
 
 for batch in dataloader:
 
@@ -96,18 +101,29 @@ for batch in dataloader:
     start_label_positions = start_label_positions.tolist()
     end_label_positions = end_label_positions.tolist()
 
+    print("="*45, file = f)
+    decoded_spec = tokenizer.decode(input_ids, skip_special_tokens=False)
+    print(decoded_spec, file = f)
+    pretty_print("Предсказанные сущности", 45, '-', f)
     if start_positions:
-        print("="*40)
-        print(tokenizer.decode(input_ids, skip_special_tokens=False))
-        print("-"*(40 - len("Предсказанные сущности")) / 2 + 
-              "Предсказанные сущности" + 
-              "-"*(40 - len("Предсказанные сущности")) / 2)
-        for start, end in zip(start_positions, end_positions):
-            print(tokenizer.decode(input_ids[start: end+1]))
-        print("-"*40)
-        print("-"*(40 - len("Настоящие сущности")) / 2 + 
-              "Настоящие сущности" + 
-              "-"*(40 - len("Настоящие сущности")) / 2)
+        for pos_idx, (start, end) in enumerate(zip(start_positions, end_positions)):
+            decoded = tokenizer.decode(input_ids[start: end+1])
+            print(decoded, file = f)
+    else:
+        print("<Ни одной сущности не найдено.>", file = f)
+    print("-"*45, file = f)
+    pretty_print("Настоящие сущности", 45, '-', f)
+    if start_label_positions:
         for start, end in zip(start_label_positions, end_label_positions):
-            print(tokenizer.decode(input_ids[start: end+1]))
-        print("-"*40)
+            decoded = tokenizer.decode(input_ids[start: end+1])
+            print(decoded, file = f)
+    else:
+        print("<Ни одной сущности не найдено.>", file = f)
+    print("-"*45, file = f)
+
+    print("Батч " + str(batch_num))
+    batch_num += 1
+
+print("="*45)
+
+f.close()

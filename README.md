@@ -23,7 +23,7 @@ Yuri Kuratov, Mikhail Arkhipov ([Статья](https://arxiv.org/abs/1905.07213)
 Для минимального запуска требуется указать директорию с моделью и директорию с данными <br>
 через `--bert_config_dir` и `--data_dir` соответственно.
 
-Данные должны быть подготовлены в формате, предоставляемом системой [**BRAT**](https://brat.nlplab.org/).
+Данные должны быть подготовлены в формате, предоставляемом системой [**BRAT**](https://brat.nlplab.org/standoff.html).
 
 Пример:<br>
 `python .\trainer.py --bert_config_dir .\bert --data_dir .\dataset`<br>
@@ -39,3 +39,7 @@ Yuri Kuratov, Mikhail Arkhipov ([Статья](https://arxiv.org/abs/1905.07213)
 Для тестирования на test следует запустить скрипт `tester.py` с теми же параметрами командной строки, как и для `trainer.py`.
 
 Также возможно взглянуть на вывод модели и сверить её с исходной разметкой: см. скрипт `test_dataset.py`.
+
+## Ссылки
+
+Последний чекпойнт модели можно скачать [тут](https://drive.google.com/file/d/1MdhAaOrmLnfNXAzWcx6jPfIeqC9zI-2n/view?usp=sharing).

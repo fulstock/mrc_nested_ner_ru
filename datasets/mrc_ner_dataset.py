@@ -328,9 +328,10 @@ class MRCNERDataset(Dataset):
 
         for sentence in sent_triplets:
             if len(sentence) >= 1:
-                queries_sent = set([q for q, (s, e), c in sentence])
+                # queries_sent = set([q for q, (s, e), c in sentence])
                 context = sentence[0][-1]
-                for query in queries_sent:
+                queries_decoded = [queries[tag] for tag in [qq for qq in queries.keys() if qq != 'OUT']]
+                for query in queries_decoded:
                     sample = [(s, e) for q, (s, e), c in sentence if q == query]
                     samples.append((query, sample, context))
 

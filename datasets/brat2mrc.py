@@ -21,10 +21,10 @@ import os
 
 from nltk.data import load
 
-jsonpath = "jsons/train.json" # Здесь выбираем, куда будет сохраняться датасет, и под каким именем
+jsonpath = "fakejsons/test.json" # Здесь выбираем, куда будет сохраняться датасет, и под каким именем
 jsonfile = open(jsonpath, "w", encoding='UTF-8') 
 
-dataset_path = "NEREL/train" # Здесь указываем путь к каталогу с файлами, подготовленными через BRAT
+dataset_path = "fakedata" # Здесь указываем путь к каталогу с файлами, подготовленными через BRAT
 
 ru_tokenizer = load("tokenizers/punkt/russian.pickle") # Загрузка токенизатора для русского языка
 

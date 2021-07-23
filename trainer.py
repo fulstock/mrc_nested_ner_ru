@@ -195,7 +195,7 @@ class BertLabeling(pl.LightningModule):
         tf_board_logs = {
             "lr": self.trainer.optimizers[0].param_groups[0]['lr'] 
         }
-        tokens, token_type_ids, start_labels, end_labels, start_label_mask, end_label_mask, match_labels = batch
+        tokens, token_type_ids, start_labels, end_labels, start_label_mask, end_label_mask, match_labels, sample_idx, tag_idx = batch
 
         # num_tasks * [bsz, length, num_labels]
         attention_mask = (tokens != 0).long()
@@ -225,7 +225,7 @@ class BertLabeling(pl.LightningModule):
 
         output = {}
 
-        tokens, token_type_ids, start_labels, end_labels, start_label_mask, end_label_mask, match_labels = batch
+        tokens, token_type_ids, start_labels, end_labels, start_label_mask, end_label_mask, match_labels, sample_idx, tag_idx = batch
 
         attention_mask = (tokens != 0).long()
         start_logits, end_logits, span_logits = self(tokens, attention_mask, token_type_ids)
@@ -296,9 +296,9 @@ class BertLabeling(pl.LightningModule):
         """
         load_mmap_dataset
         """
-        dataset_path = self.data_dir
+        dataset_path = os.path.join(self.data_dir, f"{prefix}.json")
         vocab_path = os.path.join(self.bert_dir, "vocab.txt") # важно знать, по какому словарю токенизировать
-        dataset = MRCNERDataset(dataset_path=os.path.join(dataset_path, prefix), 
+        dataset = MRCNERDataset(dataset_path=dataset_path, 
                                 tokenizer=BertWordPieceTokenizer(vocab_path, lowercase = False),
                                 max_length=self.args.max_length,
                                 pad_to_maxlen=False,

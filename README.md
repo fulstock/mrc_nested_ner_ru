@@ -17,6 +17,10 @@ Yuri Kuratov, Mikhail Arkhipov ([Статья](https://arxiv.org/abs/1905.07213)
 Проект построен на [pytorch-lightning](https://github.com/PyTorchLightning/pytorch-lightning).
 Все подробности о параметрах обучения можно узнать в [документации pytorch-lightning](https://pytorch-lightning.readthedocs.io/en/latest/).
 
+## Данные
+
+Перед началом использования требуется переформатировать исходные данные. Они должны быть подготовлены в формате, предоставлямом системой [**BRAT**](https://brat.nlplab.org/standoff.html). Конвертация данных производится с помощью запуска скрипта `datasets\brat2mrc.py`. См. файл за подробностями.
+
 ## Обучение
 Обучение - запуск скрипта `trainer.py` с соответствующими параметрами.
 
@@ -39,7 +43,3 @@ Yuri Kuratov, Mikhail Arkhipov ([Статья](https://arxiv.org/abs/1905.07213)
 Для тестирования на test следует запустить скрипт `tester.py` с теми же параметрами командной строки, как и для `trainer.py`.
 
 Также возможно взглянуть на вывод модели и сверить её с исходной разметкой: см. скрипт `test_dataset.py`.
-
-## Ссылки
-
-Последний чекпойнт модели можно скачать [тут](https://drive.google.com/file/d/1MdhAaOrmLnfNXAzWcx6jPfIeqC9zI-2n/view?usp=sharing).

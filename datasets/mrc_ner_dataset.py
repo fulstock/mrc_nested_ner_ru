@@ -60,13 +60,15 @@ class MRCNERDataset(Dataset):
         json_path: path to mrc-ner style json
         tokenizer: BertTokenizer
         max_length: int, max length of query+context
-        possible_only: if True, only use possible samples that contain answer for the query/context
-        is_chinese: is chinese dataset
     """
     def __init__(self, dataset_path, tokenizer: BertWordPieceTokenizer, max_length: int = 128, pad_to_maxlen=False, tag = None):
 
         dataset_file = open(dataset_path, encoding='UTF-8')
         self.all_data = json.load(dataset_file)
+        
+        if tag:
+            self.all_data = [sample for sample in self.all_data if sample["tag"] == tag]
+        
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.pad_to_maxlen = pad_to_maxlen
@@ -141,9 +143,31 @@ class MRCNERDataset(Dataset):
 
         # print(origin_offset2token_idx_start, end = '\n\n')
         # print(origin_offset2token_idx_end, end = '\n\n')
-
-        new_start_positions = [origin_offset2token_idx_start[start] for start in start_positions]
-        new_end_positions = [origin_offset2token_idx_end[end] for end in end_positions]
+        
+        try:
+            new_start_positions = [origin_offset2token_idx_start[start] for start in start_positions]
+            new_end_positions = [origin_offset2token_idx_end[end] for end in end_positions]
+        except KeyError:
+            
+            ''' print(query, end = '\n\n')
+            print(context, end = '\n\n')
+            print(start_positions, end = '\n\n')
+            print(end_positions, end = '\n\n')
+            print(tokens, end = '\n\n')
+            print(offsets, end = '\n\n')
+            print(origin_offset2token_idx_start, end = '\n\n')
+            print(origin_offset2token_idx_end, end = '\n\n')'''
+            
+            # print(data) 
+        
+            # Пример некорректен из-за опечатки, обнуляем наличие сущности
+        
+            start_positions = []
+            end_positions = []
+            new_start_positions = [origin_offset2token_idx_start[start] for start in start_positions]
+            new_end_positions = [origin_offset2token_idx_end[end] for end in end_positions]
+            # pass # Ошибка в исходной разметке
+            
 
         label_mask = [
             (0 if type_ids[token_idx] == 0 or offsets[token_idx] == (0, 0) else 1)
@@ -162,11 +186,19 @@ class MRCNERDataset(Dataset):
             if next_word_idx is not None and current_word_idx == next_word_idx:
                 end_label_mask[token_idx] = 0
 
-        assert all(start_label_mask[p] != 0 for p in new_start_positions)
-        assert all(end_label_mask[p] != 0 for p in new_end_positions)
+        try:
+            assert all(start_label_mask[p] != 0 for p in new_start_positions)
+            assert all(end_label_mask[p] != 0 for p in new_end_positions)
 
-        assert len(new_start_positions) == len(new_end_positions) == len(start_positions)
-        assert len(label_mask) == len(tokens)
+            assert len(new_start_positions) == len(new_end_positions) == len(start_positions)
+            assert len(label_mask) == len(tokens)
+            
+        except:
+            
+            pass
+            
+            # print(data)
+            
 
         start_labels = [(1 if idx in new_start_positions else 0)
                         for idx in range(len(tokens))]

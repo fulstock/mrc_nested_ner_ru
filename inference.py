@@ -130,6 +130,8 @@ example_num = 0
 trained_mrc_ner_model.eval()
 
 f = open("test_dataset.out", "w", encoding = "utf-8")
+if not os.path.exists('inference'):
+    os.makedirs('inference')
 inf_file = open("inference/twits_0.json", "w", encoding="utf-8")
 file_index = 0
 

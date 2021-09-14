@@ -98,7 +98,7 @@ class MRCNERDataset(Dataset):
 
         sample_id = data.get("id", "0.0")
         sample_idx, tag_idx = sample_id.split(".")
-        sample_idx = torch.LongTensor([int(sample_idx)])
+        sample_idx = sample_idx
         tag_idx = torch.LongTensor([int(tag_idx)])
 
         query = data["query"]

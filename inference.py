@@ -1,247 +1,130 @@
-
-
-
-import os
 import torch
-from torch.utils.data import DataLoader
-from models.bert_labeling import BertLabeling
+from pytorch_lightning import Trainer
+
 from tokenizers import BertWordPieceTokenizer
-from datasets.mrc_ner_dataset import MRCNERDataset
-import numpy as np
 
-import json
-import tqdm
-import time
+import matplotlib.pyplot as plt
 
-DATA_PATH = "jsons"
-BERT_PATH = "for_mrc/rubert"
-CHECKPOINTS = "model_23_08-16_58.ckpt"
-DATASET_PATH = "twits.json"
+from trainer import *
+from utils.get_parser import get_parser
+from utils.random_seed import set_random_seed
+from utils.progress import TGProgressBar
 
-dataset_path = os.path.join(DATA_PATH, DATASET_PATH)
-vocab_path = os.path.join(BERT_PATH, "vocab.txt")
-data_tokenizer = BertWordPieceTokenizer(vocab_path, lowercase = False)
+def process_data(context, query, tokenizer):
 
-dataset = MRCNERDataset(dataset_path=dataset_path,
-                        tokenizer=data_tokenizer,
-                        max_length=128,
-                        pad_to_maxlen=False,
-                        tag = None)
+    query_context_tokens = tokenizer.encode(query, context, add_special_tokens=True)
+    tokens = query_context_tokens.ids
+    type_ids = query_context_tokens.type_ids
+    offsets = query_context_tokens.offsets
 
-dataloader = DataLoader(dataset=dataset, batch_size=1, shuffle=False)
+    return torch.LongTensor(tokens).unsqueeze(0), torch.LongTensor(type_ids).unsqueeze(0)
 
-model_args = {
-    "data_dir" : DATA_PATH ,
-    "bert_config_dir" : BERT_PATH ,
-    "pretrained_checkpoint" : CHECKPOINTS ,
-    "max_length" : 128 , 
-    "batch_size" : 1 , 
-    "lr" : 2e-5 , 
-    "workers" : 8 , 
-    "weight_decay" : 0.01 , 
-    "warmup_steps" : 0 , 
-    "adam_epsilon" : 1e-8 , # Epsilon для алгоритма ADAMW
-    "mrc_dropout" : 0.1 , # Dropout вероятность в модели MRC
-    "weight_start" : 1.0 , # Коэффициент для стартовых позиций меток (альфа)
-    "weight_end" : 1.0 , # Коэффициент для конечных позиций меток (бета)
-    "weight_span" : 1.0 , # Коэффициент для спанов меток (гамма)
-    "loss_type" : "bce" , 
-    "optimizer" : "adamw" ,
-    "dice_smooth" : 1e-8 ,
-    "final_div_factor" : 1e4 ,
-    "span_loss_candidates" : "all" , 
-    "accumulate_grad_batches" : 1
-}
+def process_attn(tokens, attention):
 
-bert_args = {
-    "bert_dropout" : 0.1 # Dropout самого берта
-}
+    attn_data = []
 
-trainer_args = {
-    "default_root_dir" : "logs" , # Куда сохранять модели, логи и т.д.
-    "max_epochs" : 16 , # Число эпох для обучения
-    "resume_from_checkpoint" : None , # Воспроизвести обучение с чекпойнта
-    # "val_check_interval" : 1.0 , # Как часто валидировать модель
-    "gpus" : 1 # , # число используемых видеокарт
-    # Добавьте любые нужные аргументы для конфигурации модели. Их можно найти на 
-    # https://pytorch-lightning.readthedocs.io/en/latest/common/trainer.html#trainer-flags
-}
+    n_heads = attention[0][0].size(0)
+    layers = list(range(len(attention)))
+    heads = list(range(n_heads))
 
-trained_mrc_ner_model = BertLabeling.load_from_checkpoint(
-        # model_args = model_args,
-        bert_args = bert_args,
-        trainer_args = trainer_args,
-        checkpoint_path=CHECKPOINTS,
-        map_location=None,
-        # batch_size=1,
-        # max_length=128,
-        # bert_config_dir = "for_mrc/rubert",
-        # data_dir = "jsons",
-        # mrc_dropout = 0.1,
-        # loss_type = 
-        # workers=0,
-        **model_args
-    )
+    print("n_heads = " + str(n_heads))
+    print("n_layers = " + str(len(attention)))
 
-tags = [ 'AGE', 'AWARD', 'CITY', 'COUNTRY', 'CHARGE', 'CRIME', 'DATE', 'DISEASE', 'DISTRICT', 'EVENT', 'FACILITY', 
-         'FAMILY', 'IDEOLOGY', 'LANGUAGE', 'LAW', 'LOCATION', 'MONEY', 'NATIONALITY', 'NUMBER', 'ORDINAL', 
-         'ORGANIZATION', 'PERCENT', 'PERSON', 'PENALTY', 'PRODUCT', 'PROFESSION', 'RELIGION', 'STATE_OR_PROVINCE', # 'OUT', 
-         'TIME', 'WORK_OF_ART' ]
+    attention = [attention[layer_index] for layer_index in layers]
+    squeezed = []
+    for layer_attention in attention:
+        # 1 x num_heads x seq_len x seq_len
+        # print(layer_attention)
+        layer_attention = layer_attention.squeeze(0)
+        layer_attention = layer_attention[heads]
+        squeezed.append(layer_attention)
+    # num_layers x num_heads x seq_len x seq_len
+    attention = torch.stack(squeezed)
+    attention = attention.tolist()
 
-tag_to_queries = {
-     'MONEY': 'Деньги - это монеты или банкноты с указанием их стоимости, которые используются для покупки вещей, или их общая сумма.', 
-     'CRIME': 'Преступление - это действие или деятельность, противоречащая закону, или незаконная деятельность в целом.', 
-     'PENALTY': 'Штраф - это вид наказания, часто включающий выплату денег, который назначается вам, если вы нарушите соглашение или не соблюдаете правила.', 
-     'STATE_OR_PROVINCE': 'Штат или провинция - одна из областей, на которые страна или империя делятся в рамках организации своего правительства, которое часто имеет некоторый контроль над своими собственными законами.', 
-     # 'OUT': '[UNK]', 
-     'ORGANIZATION': 'Организация - это компания или другая группа людей, которые работают вместе для определенной цели.', 
-     'PRODUCT': 'Продукт - это то, что предназначено для продажи, особенно что-то произведенное в результате промышленного процесса или что-то выращенное в сельском хозяйстве.',
-     'NATIONALITY': 'Национальность - это группа людей одной расы, религии, традиций и т.д.',
-     'RELIGION': 'Религия - это вера и поклонение богу или богам или любая подобная система веры и поклонения.',
-     'DISTRICT': 'Район - это территория страны или города, имеющая фиксированные границы, которые используются для официальных целей, или имеющая особую особенность, которая отличает его от окружающих территорий.',
-     'PROFESSION': 'Профессия - это любой вид работы, требующий специальной подготовки или определенных навыков.', 
-     'LANGUAGE': 'Язык - это система общения, используемая людьми, живущими в определенной стране.',
-     'PERSON': 'Человек - мужчина, женщина или ребенок.',
-     'DATE': 'Дата - это номер дня в месяце, часто указываемый в сочетании с названием дня, месяца и года.',
-     'WORK_OF_ART': 'Произведение искусства - это предмет, созданный творцом большого мастерства, особенно картина, рисунок или статуя.',
-     'TIME': 'Время - это часть существования, которая измеряется минутами, днями, годами и т.д., или его процесс, рассматриваемый как единое целое.',
-     'AWARD': 'Награда - это приз или денежная сумма, которую человек или организация получают за достижение.',
-     'FACILITY': 'Объект - это место, включая здания, где происходит определенная деятельность.',
-     'ORDINAL': 'Порядковый номер - это число, которое показывает положение чего-либо в списке.',
-     'DISEASE': 'Болезнь - это заболевание людей, животных, растений и т.д., вызванное инфекцией или нарушением здоровья.',
-     'IDEOLOGY': 'Идеология - это набор убеждений или принципов, особенно тех, на которых основана политическая система, партия или организация.',
-     'NUMBER': 'Число - это знак или символ, представляющий единицу, которая является частью системы подсчета и расчета.',
-     'EVENT': 'Событие - это все, что происходит, особенно что-то важное или необычное.',
-     'CHARGE': 'Обвинение - это официальное заявление полиции о том, что кто-то обвиняется в преступлении.',
-     'AGE': 'Возраст - это период времени, когда кто-то был жив или что-то существовало.',
-     'LOCATION': 'Местоположение - это место или позиция.',
-     'COUNTRY': 'Страна - это территория земли, на которой есть собственное правительство, армия и т.д.',
-     'PERCENT': 'Процент - это одна часть из каждых 100 или указанное количество чего-либо, деленное на 100.',
-     'FAMILY': 'Семья - это группа людей, связанных друг с другом, таких как мать, отец и их дети.',
-     'CITY': 'Город - это место, где живет много людей, со множеством домов, магазинов, предприятий и т.д.',
-     'LAW': 'Закон - это правило, обычно устанавливаемое правительством, которое используется для упорядочивания поведения общества.'
-}
+    return attention
 
-def pretty_print(string, length, symbol, file):
-     print (symbol *((length - len(string)) // 2) + string + symbol *((length - len(string)) // 2), file = file)
+def test(tag_test = None):
 
-example_num = 0
+    parser = get_parser()
+    parser = BertLabeling.add_model_specific_args(parser) 
+    parser = Trainer.add_argparse_args(parser)
+    args = parser.parse_args()
 
-trained_mrc_ner_model.eval()
+    seed_everything(args.seed, workers=True)
 
-f = open("test_dataset.out", "w", encoding = "utf-8")
-if not os.path.exists('inference'):
-    os.makedirs('inference')
-inf_file = open("inference/twits_0.json", "w", encoding="utf-8")
-file_index = 0
+    ckpt_model = BertLabeling.load_from_checkpoint(args.pretrained_checkpoint) # Инициализиуем модель на их основе
 
-entities = []
+    sequence = "В ноябре прошлого года независимая комиссия Всемирного антидопингового агентства обвинила Россию в нарушениях антидопинговых правил."
+    query = "Дата - это номер дня в месяце, часто указываемый в сочетании с названием дня, месяца и года."
 
-deltatime = time.time()
+    vocab_path = "mrc/for_mrc/rubert/vocab.txt"
+    tokenizer = BertWordPieceTokenizer(vocab_path, lowercase = False)
 
-for bidx, batch in enumerate(tqdm.tqdm(dataloader)):
-
-    tokens, token_type_ids, start_labels, end_labels, start_label_mask, end_label_mask, match_labels, sample_idx, tag_idx = batch
+    tokens, type_ids = process_data(sequence, query, tokenizer)
+    readable_tokens = tokenizer.decode(tokens.squeeze(0).tolist(), skip_special_tokens=False)
+    print(tokens)
+    print(tokens.size())
     attention_mask = (tokens != 0).long()
 
-    with torch.no_grad():
-        start_logits, end_logits, match_logits = trained_mrc_ner_model(tokens, attention_mask, token_type_ids)
+    ckpt_model.eval()
+    start_logits, end_logits, span_logits, attention = ckpt_model.forward(tokens, attention_mask=attention_mask, token_type_ids=type_ids)
 
-    batch_size, seq_len = start_logits.size()
-
-    start_preds = start_logits > 0 
-    end_preds = end_logits > 0
-    match_preds = match_logits > 0
-
-    match_preds = (match_preds
-                   & start_preds.unsqueeze(-1).expand(-1, -1, seq_len)
-                   & end_preds.unsqueeze(1).expand(-1, seq_len, -1))
+    print("Attentions:")
+    attn_view = process_attn(tokens, attention)
+    print(len(attn_view))
+    layer = attn_view[2] # 12 layers, 12 heads, head = seq_len x seq_len (doubled list)
     
-    match_label_mask = (start_label_mask.unsqueeze(-1).expand(-1, -1, seq_len)
-                        & end_label_mask.unsqueeze(1).expand(-1, seq_len, -1))
-    match_label_mask = torch.triu(match_label_mask, 0)
-    match_preds = match_label_mask & match_preds
-    
-    start_preds = start_preds[example_num]
-    end_preds = end_preds[example_num]
-    match_preds = match_preds[example_num]
-    
-    input_ids = tokens[example_num].tolist()
-    # match_labels = match_labels[example_num]
+    import numpy as np
+    import seaborn as sns; sns.set_theme()
 
-    start_positions, end_positions = torch.where(match_preds == True)
-    # start_label_positions, end_label_positions = torch.where(match_labels > 0)
+    avg_heads = np.sum(np.array(layer), axis = 0)
+    print(avg_heads.shape)
 
-    start_positions = start_positions.tolist()
-    end_positions = end_positions.tolist()
-    # start_label_positions = start_label_positions.tolist()
-    # end_label_positions = end_label_positions.tolist()
+    def plot_matrix(cm, query_len, tokens, title):
+        ax = sns.heatmap(cm, cmap="Blues", annot=False, square = True, robust = False,
+                xticklabels=tokens[query_len + 1 : -1], yticklabels=tokens[1:query_len], cbar=True)
+        ax.set(title=title, xlabel="", ylabel="")
+        return ax
 
-    tag_idx = int(tag_idx)
+    cm = np.array(avg_heads)
+    tokens = tokens.squeeze(0).tolist()
+    query_len = tokens.index(102)
+    cm = cm[1 : query_len, query_len + 1 : -1]
+    ax = plot_matrix(cm, query_len, [tokenizer.decode([t], skip_special_tokens=False) for t in tokens], "")
+    fig = ax.get_figure()
+    fig.set(figheight = 11, figwidth = 9)
+    fig.savefig("mrc/attn.png")
 
-    print("="*45, file = f)
-    context = data_tokenizer.decode(input_ids, skip_special_tokens=False)
-    print(context, file = f)
-    pretty_print("Предсказанные сущности", 45, '-', f)
-    if start_positions:
-        for pos_idx, (start, end) in enumerate(zip(start_positions, end_positions)):
-            decoded = data_tokenizer.decode(input_ids[start: end+1])
-            print(decoded, file = f)
-
-        entity = { "id" : "{}.{}".format(sample_idx, tag_idx), 
-                   "context" : context,
-                   "tag" : tags[tag_idx],
-                   "query" : tag_to_queries[tags[tag_idx]],
-                   "filename" : "",
-                   "exists" : True,
-                   "start_positions" : start_positions,
-                   "end_positions" : end_positions, 
-                   "span_positions" : ["{};{}".format(start, end) for start, end in zip(start_positions, end_positions)],
-                   "spans" : [data_tokenizer.decode(input_ids[start: end+1]) for start, end in zip(start_positions, end_positions)]
-        }
+if __name__ == '__main__':
+    test() 
 
 
-    else:
-        print("<Ни одной сущности не найдено.>", file = f)
 
-        entity = { "id" : "{}.{}".format(sample_idx, tag_idx), 
-                   "context" : context,
-                   "tag" : tags[tag_idx],
-                   "query" : tag_to_queries[tags[tag_idx]],
-                   "filename" : "",
-                   "exists" : False,
-                   "start_positions" : [],
-                   "end_positions" : [], 
-                   "span_positions" : [],
-                   "spans" : []
-        }
 
-    print("-"*45, file = f)
 
-    entities.append(entity)
 
-    if bidx % 55 == 0:
-
-        recent_time = time.time()
-        if recent_time - deltatime > 120:
-
-            json.dump(entities, inf_file, ensure_ascii = False, indent = 2)
-            print("Saved total of {} entities to inference/{}_{}.json}".format(len(entities), DATASET_PATH[:-5], file_index))
-            entities = []
-
-            inf_file.close()
-            f.close()
-
-            file_index += 1
-
-            f = open("test_dataset.out", "a", encoding = "utf-8")
-            inf_file = open("inference/twits_{}.json".format(file_index), "w", encoding="utf-8")
-
-            deltatime = recent_time
-
-print("="*45, file = f)
-
-json.dump(entities, inf_file, ensure_ascii = False, indent = 2)
-
-inf_file.close()
-f.close()
+# {
+#     "id": "2075.3",
+#     "context": "В начале 2016 г. Григорий Родченков и его заместитель Тимофей Соболевский эмигрировали в США, а министр спорта России Виталий Мутко сообщил, что лаборатория будет готовиться переаттестации.",
+#     "tag": "COUNTRY",
+#     "query": "Страна - это территория земли, на которой есть собственное правительство, армия и т.д.",
+#     "filename": "100756_text",
+#     "exists": true,
+#     "start_positions": [
+#       89,
+#       111
+#     ],
+#     "end_positions": [
+#       92,
+#       117
+#     ],
+#     "span_positions": [
+#       "89;92",
+#       "111;117"
+#     ],
+#     "spans": [
+#       "США",
+#       "России"
+#     ]
+#   },

@@ -1,0 +1,3 @@
+**/train.json filter=lfs diff=lsf merge=lfs
+**/dev.json filter=lfs diff=lsf merge=lfs
+**/test.json filter=lfs diff=lsf merge=lfs

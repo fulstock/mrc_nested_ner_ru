@@ -1,4 +1,6 @@
 torch
-pytorch-lightning==0.9.0
+pytorch-lightning
 tokenizers
 transformers
+nltk
+pymorphy2

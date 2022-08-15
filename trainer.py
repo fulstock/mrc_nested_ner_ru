@@ -54,19 +54,17 @@ def main():
 
     # Если грузим из чекпойнта
     if args.pretrained_checkpoint:
-        model.load_state_dict(torch.load(args.pretrained_checkpoint, 
-                                         map_location=torch.device('cpu'))["state_dict"]) # ? Убрать бы map_location
+        model.load_state_dict(torch.load(args.pretrained_checkpoint)["state_dict"]) # ? Убрать бы map_location
 
     serial_number = datetime.now().strftime('%y%m%d_%H%M%S')
 
-    param = "mc5-" if args.most_common else ""
-    print(param)
+    param = ""
 
     checkpoint_callback = ModelCheckpoint(
         # Директория, куда будут сохраняться чекпойнты и логи (по умолчанию корневая папка проекта)
         dirpath=os.path.join(args.default_root_dir, "ckpt"), 
         filename = "model-" + param + args.data_dir.split('/')[-1] + f"-seed={args.seed}-" + serial_number + "-{epoch}",
-        save_top_k=3, # Сохранять топ 10 моделей по метрике monitor
+        save_top_k=-1, # Сохранять топ 10 моделей по метрике monitor
         verbose=True, # Уведомлять о результатах валидации
         monitor="span_f1", # Метрика для подсчета качества модели, см. span_f1
         mode="max", # Сохраняем самые максимальные по метрике модели
@@ -89,4 +87,8 @@ def main():
 
 
 if __name__ == '__main__':
+
+    import os
+    os.environ['OPENBLAS_NUM_THREADS'] = '1'
+
     main()

@@ -53,3 +53,59 @@ Yuri Kuratov, Mikhail Arkhipov ([Статья](https://arxiv.org/abs/1905.07213)
 Дополнительно присутствует система вывода модели `inference.py`. Данные на входе и выходе - в формате `mrc-json`. См. файл за подробностями.
 
 Также в каталоге `ckpt` добавлены ссылки на обученные модели на разных подсказках на данных `NEREL-bio`. См. `ckpt\links.md`.
+
+---
+
+Based upon
+**A Unified MRC Framework for Named Entity Recognition** <br>
+Xiaoya Li, Jingrong Feng, Yuxian Meng, Qinghong Han, Fei Wu and Jiwei Li<br>
+In ACL 2020. ([Article](https://arxiv.org/abs/1910.11476)) and corresponding [repo](https://github.com/ShannonAI/mrc-for-flat-nested-ner),
+<br>
+<br>
+as well as
+**Adaptation of Deep Bidirectional Multilingual Transformers for Russian Language** <br>
+Yuri Kuratov, Mikhail Arkhipov ([Article](https://arxiv.org/abs/1905.07213))
+and the [model](https://huggingface.co/DeepPavlov/rubert-base-cased).<br>
+
+## Notebook
+
+In addition to using scripts, you can use the notebook `Main.ipynb`. There you can set all the training parameters, run the training itself, test and evaluate the output. See `Main.ipynb` for details.
+
+## Installation
+`pip install -r requirements.txt`
+
+The project is built on [pytorch-lightning](https://github.com/PyTorchLightning/pytorch-lightning).
+For full details on training parameters, see the [pytorch-lightning documentation](https://pytorch-lightning.readthedocs.io/en/latest/).
+
+## Data
+
+Before usage, you need to reformat the original data. They must be prepared in the format provided by the [**BRAT**](https://brat.nlplab.org/standoff.html) system. Converting data to the `mrc-json` format accepted by the model is done by running the `datasets\brat2mrc.py` script. See the file for details.
+
+To use and apply any prompts for the model, instead of `datasets\brat2mrc.py`, you need to use the appropriate script from the `prompts` directory. Possible prompts are listed there.
+
+## Training
+Run the `trainer.py` script with the appropriate parameters.
+
+For a minimal launch, you need to specify a directory with a model and a directory with data <br>
+via `--bert_config_dir` and `--data_dir` respectively.
+
+Data must be prepared in the format provided by the [**BRAT**](https://brat.nlplab.org/standoff.html) system.
+
+Example:<br>
+`python .\trainer.py --bert_config_dir .\bert --data_dir .\dataset`<br>
+Another example: <br>
+`python .\trainer.py --pretrained_checkpoint <path to checkpoint> --bert_config_dir .\bert `<br>`--data_dir .\data --batch_size 4 --max_epochs 1 --val_check_interval 0.25` - start training from checkpoint based on bert and data with minibatch size of 4, one epoch and validation every 0.25 batches of one epoch.
+
+All other parameters (output directory, model hyperparameters, ...) can be found by calling `--help`.
+
+## Testing
+`trainer.py` is automatically validated on dev subset every `val_check_interval` epochs, <br>
+and stores the best `k` checkpoints in `default_root_dir`.
+
+To run test on the test subset, run the `tester.py` script with the same command line options as for `trainer.py`.
+
+It is also possible to look at the output of the model and check it on the original markup: see the `test_dataset.py` script.
+
+Additionally, there is an `inference.py` model inference system. The input and output data is in `mrc-json` format. See file for details.
+
+Also in the `ckpt` directory, links to trained models with different prompts on the `NEREL-bio` data have been added. See `ckpt\links.md`.

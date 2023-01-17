@@ -18,55 +18,104 @@
 
 import json
 import os
-import argparse
 
 from nltk.data import load
-
-from tqdm.auto import tqdm
+from nltk.tokenize import word_tokenize
+import pymorphy2
 
 # import nltk
-# nltk.download('punkt')
+# nltk.download('stopwords')
 
-ru_tokenizer = load("tokenizers/punkt/russian.pickle") # Загрузка токенизатора для русского языка
+from nltk.corpus import stopwords
+russian_stopwords = stopwords.words("russian")
 
-brat2mrc_parser = argparse.ArgumentParser(description = "Brat to mrc-json formatter script.")
-brat2mrc_parser.add_argument('--brat_dataset_path', type = str, required = True, help = "Path to brat dataset (with train, dev, test dirs).")
-brat2mrc_parser.add_argument('--mrcjson_output_path', type = str, default = None, help = "Path, where formatted dataset would be stored. By default, same path as in --brat_dataset_path would be used.")
-brat2mrc_parser.add_argument('--tags_file', type = str, required = True, help = "Path to <>.tags file with entity tags that would be processed.")
+from collections import Counter
 
-args = brat2mrc_parser.parse_args()
+morph = pymorphy2.MorphAnalyzer()
+train_dataset_path = "../../data/nerel-bio-v1.0/train"
+dataset_name = "NEREL-bio-v1.0_mfc2"
 
-with open(args.tags_file, "r") as f:
-    tags = json.load(f)
-
-brat_dataset_path = args.brat_dataset_path
-
-mrcjson_output_path = args.mrcjson_output_path
-if mrcjson_output_path is None:
-    mrcjson_output_path = brat_dataset_path
+#########################################################
 
 sets = ["train", "dev", "test"]
 
 for ds in sets:
 
-    print(ds + " set:")
+    jsonpath = "../../data/" + dataset_name + "/" + ds + ".json" # Здесь выбираем, куда будет сохраняться датасет, и под каким именем
+    dataset_path = "../../data/NEREL-bio-v1.0/" + ds # Здесь указываем путь к каталогу с файлами, подготовленными через BRAT
 
-    jsonpath = os.path.join(mrcjson_output_path, ds + ".json")
-    dataset_path = os.path.join(brat_dataset_path, ds)
-
-    jsondir = os.path.dirname(jsonpath)
+    jsondir = "/".join(jsonpath.split('/')[:-1])
 
     if not os.path.exists(jsondir):
         os.makedirs(jsondir)
 
-    jsonfile = open(jsonpath, "w", encoding='UTF-8')
+    jsonfile = open(jsonpath, "w", encoding='UTF-8') 
+    ru_tokenizer = load("tokenizers/punkt/russian.pickle") # Загрузка токенизатора для русского языка
 
-    entities = [] # Лист с записями как выше. Его заполним в json
+    tags = ['ACTIVITY', 'ADMINISTRATION_ROUTE', 'AGE', 'ANATOMY', 'CHEM', 'CITY', 'COUNTRY', 'DATE', 'DEVICE', 
+            'DISO', 'FACILITY', 'FINDING', 'FOOD', 'GENE', 'HEALTH_CARE_ACTIVITY', 'INJURY_POISONING', 'LABPROC', 
+            'LIVB', 'LOCATION', 'MEDPROC', 'MENTALPROC', 'NUMBER', 'ORDINAL', 'ORGANIZATION', 'PERCENT', 'PERSON', 
+            'PHYS', 'PRODUCT', 'PROFESSION', 'SCIPROC', 'STATE_OR_PROVINCE', 'TIME']
+
+    all_entities = []
 
     span_id = 0
 
+    for ad, dirs, files in os.walk(train_dataset_path):
+        for f in files:
+
+            if f[-4:] == '.ann':
+                try:
+
+                    if os.stat(train_dataset_path + '/' + f).st_size == 0:
+                        continue
+
+                    annfile = open(train_dataset_path + '/' + f, "r", encoding='UTF-8')
+                    txtfile = open(train_dataset_path + '/' + f[:-4] + ".txt", "r", encoding='UTF-8')
+
+                    txtdata = txtfile.read()
+                    # txtdata = txtdata.replace('\n', '.', 1) # Отделение заголовков
+
+                    # Шаг 1. Считать все именованные сущности из файла, закрыть файл.
+
+                    file_entities = []
+
+                    # Именованная сущность пока что будет представленна укороченной записью. Позже она будет приведена к выду выше.
+
+                    for line in annfile:
+                        line_tokens = line.split()
+                        if len(line_tokens) > 3 and len(line_tokens[0]) > 1 and line_tokens[0][0] == 'T':
+                            if line_tokens[1] in tags:
+                                try:
+                                    file_entities.append( { 
+                                                        "tag" : line_tokens[1], 
+                                                        "start" : int(line_tokens[2]),
+                                                        "end" : int(line_tokens[3]),
+                                                        "span" : txtdata[int(line_tokens[2]) : int(line_tokens[3])]
+                                                        } )
+                                except ValueError:
+                                    pass # Все неподходящие сущности
+
+                    annfile.close()
+
+                    all_entities.extend(file_entities)
+
+                except FileNotFoundError:
+                    pass
+
+    tag_to_spans = {tag : [] for tag in tags}
+    for entity in all_entities:
+        tag_to_spans[entity["tag"]].extend(word_tokenize(entity["span"]))
+
+    for tag, entities in tag_to_spans.items():
+        tag_to_spans[tag] = [morph.parse(word)[0].normal_form for word in entities if word not in russian_stopwords]
+        tag_to_spans[tag] = Counter(tag_to_spans[tag]).most_common(2)
+        tag_to_spans[tag] = [w for w, n in sorted(tag_to_spans[tag], key = lambda x : x[1], reverse = True)]
+
+    entities = [] 
+
     for ad, dirs, files in os.walk(dataset_path):
-        for f in tqdm(files):
+        for f in files:
 
             if f[-4:] == '.ann':
                 try:
@@ -89,13 +138,14 @@ for ds in sets:
                     for line in annfile:
                         line_tokens = line.split()
                         if len(line_tokens) > 3 and len(line_tokens[0]) > 1 and line_tokens[0][0] == 'T':
-                            try:
-                                file_entities.append( { "tag" : line_tokens[1], 
-                                                   "start" : int(line_tokens[2]),
-                                                   "end" : int(line_tokens[3]),
-                                                  } )
-                            except ValueError:
-                                pass # Все неподходящие сущности
+                            if line_tokens[1] in tags:
+                                try:
+                                    file_entities.append( { "tag" : line_tokens[1], 
+                                                       "start" : int(line_tokens[2]),
+                                                       "end" : int(line_tokens[3]),
+                                                      } )
+                                except ValueError:
+                                    pass # Все неподходящие сущности
 
                     annfile.close()
 
@@ -114,7 +164,7 @@ for ds in sets:
 
                         for tag_id, tag in enumerate(tags):
 
-                            query = tag
+                            query = f"{tag} - это сущности, такие как " + ", ".join(tag_to_spans[tag]) + "."
 
                             if tag in sentence_tags:
 

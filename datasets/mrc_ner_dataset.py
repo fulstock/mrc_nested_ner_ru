@@ -98,7 +98,7 @@ class MRCNERDataset(Dataset):
 
         sample_id = data.get("id", "0.0")
         sample_idx, tag_idx = sample_id.split(".")
-        sample_idx = sample_idx
+        sample_idx = torch.LongTensor([int(sample_idx)])
         tag_idx = torch.LongTensor([int(tag_idx)])
 
         query = data["query"]
@@ -196,8 +196,7 @@ class MRCNERDataset(Dataset):
         except:
             
             pass
-            
-            # print(data)
+            #print(data)
             
 
         start_labels = [(1 if idx in new_start_positions else 0)
@@ -262,19 +261,35 @@ def run_dataset():
     import os
     from torch.utils.data import DataLoader
 
-    bert_path = "../rubert"
-    dataset_path = "../NEREL_01/dev"
+    bert_path = "mrc/for_mrc/rubert"
+    dataset_path = "data/RuNNE_empty/dev.json"
 
     vocab_file = os.path.join(bert_path, "vocab.txt")
-    from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained(bert_path, do_lower_case = False)
-    dataset = MRCNERDataset(dataset_path = dataset_path, tokenizer = tokenizer)
+    
+    tokenizer = BertWordPieceTokenizer(vocab_file, lowercase = False)
+    dataset = MRCNERDataset(dataset_path=dataset_path, 
+                            tokenizer=tokenizer,
+                            max_length=192,
+                            pad_to_maxlen=False,
+                            tag = None # для тестирования по конкретным классам сущностей
+                            )
 
-    dataloader = DataLoader(dataset, batch_size=4, 
-                             collate_fn=collate_to_max_length)
+    # if limit is not None:
+    #    dataset = TruncateDataset(dataset, limit) 
+
+    dataloader = DataLoader(
+        dataset=dataset,
+        batch_size=16,
+        num_workers=4,
+        persistent_workers = True,
+        shuffle=False,
+        collate_fn=collate_to_max_length
+    )
+
+    entities = 0
 
     for idx, batch in enumerate(dataloader):
-        for tokens, token_type_ids, start_labels, end_labels, start_label_mask, end_label_mask, match_labels in zip(*batch):
+        for tokens, token_type_ids, start_labels, end_labels, start_label_mask, end_label_mask, match_labels, sample_idx, tag_idx in zip(*batch):
             tokens = tokens.tolist()
             start_positions, end_positions = torch.where(match_labels > 0)
             start_positions = start_positions.tolist()
@@ -284,7 +299,9 @@ def run_dataset():
             print("="*20)
             print(f"len: {len(tokens)}", tokenizer.decode(tokens, skip_special_tokens=False))
             for start, end in zip(start_positions, end_positions):
+                entities += 1
                 print(str(idx) + "\t" + tokenizer.decode(tokens[start: end+1]))
+    print("Total num: ", str(entities))
 
 
 if __name__ == '__main__':

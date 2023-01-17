@@ -1,4 +1,3 @@
-
 # Преобразовать данные из формата BRAT в единый json-формат файл, подходящий под задачу MRC.
 
 # Формат данных будет представлен следующим образом.
@@ -18,50 +17,53 @@
 
 import json
 import os
+import argparse
 
 from nltk.data import load
 from nltk.tokenize import word_tokenize
 import pymorphy2
 
+from tqdm.auto import tqdm
+
 # import nltk
 # nltk.download('stopwords')
 
-from nltk.corpus import stopwords
-russian_stopwords = stopwords.words("russian")
+# from nltk.corpus import stopwords
+# russian_stopwords = stopwords.words("russian")
 
 from collections import Counter
 
 morph = pymorphy2.MorphAnalyzer()
-train_dataset_path = "data/RuNNE/train"
 
-########################################################
-
-jsonpath = "data/RuNNE_context/test.json" # Здесь выбираем, куда будет сохраняться датасет, и под каким именем
-dataset_path = "data/RuNNE/test" # Здесь указываем путь к каталогу с файлами, подготовленными через BRAT
-
-#########################################################
-
-jsondir = "/".join(jsonpath.split('/')[:-1])
-
-if not os.path.exists(jsondir):
-    os.makedirs(jsondir)
-
-jsonfile = open(jsonpath, "w", encoding='UTF-8') 
 ru_tokenizer = load("tokenizers/punkt/russian.pickle") # Загрузка токенизатора для русского языка
 
-tags = [ 'AGE', 'AWARD', 'CITY', 'COUNTRY', 'CRIME', 'DATE', 'DISEASE', 'DISTRICT', 'EVENT', 'FACILITY', 
-         'FAMILY', 'IDEOLOGY', 'LANGUAGE', 'LAW', 'LOCATION', 'MONEY', 'NATIONALITY', 'NUMBER', 'ORDINAL', 
-         'ORGANIZATION', 'PERCENT', 'PERSON', 'PENALTY', 'PRODUCT', 'PROFESSION', 'RELIGION', 'STATE_OR_PROVINCE', # 'OUT', 
-         'TIME', 'WORK_OF_ART']
+brat2mrc_parser = argparse.ArgumentParser(description = "Brat to mrc-json formatter script.")
+brat2mrc_parser.add_argument('--brat_dataset_path', type = str, required = True, help = "Path to brat dataset (with train, dev, test dirs).")
+brat2mrc_parser.add_argument('--train_dataset_path', type = str, default = None, help = "Path to train dataset, which is used for prompt generation. By default, train subset from --brat_dataset_path would be used.")
+brat2mrc_parser.add_argument('--mrcjson_output_path', type = str, default = None, help = "Path, where formatted dataset would be stored. By default, same path as in --brat_dataset_path would be used.")
+brat2mrc_parser.add_argument('--tags_file', type = str, required = True, help = "Path to <>.tags file with entity tags that would be processed.")
 
-# Лист с записями как выше. Его заполним в json
+args = brat2mrc_parser.parse_args()
+
+with open(args.tags_file, "r") as f:
+    tags = json.load(f)
+
+brat_dataset_path = args.brat_dataset_path
+
+train_dataset_path = args.train_dataset_path
+if train_dataset_path is None:
+    train_dataset_path = os.path.join(brat_dataset_path, "train")
+
+mrcjson_output_path = args.mrcjson_output_path
+if mrcjson_output_path is None:
+    mrcjson_output_path = brat_dataset_path
 
 all_entities = []
 
-span_id = 0
+print("Train dataset parse for prompt:")
 
 for ad, dirs, files in os.walk(train_dataset_path):
-    for f in files:
+    for f in tqdm(files):
 
         if f[-4:] == '.ann':
             try:
@@ -84,16 +86,17 @@ for ad, dirs, files in os.walk(train_dataset_path):
                 for line in annfile:
                     line_tokens = line.split()
                     if len(line_tokens) > 3 and len(line_tokens[0]) > 1 and line_tokens[0][0] == 'T':
-                        try:
-                            file_entities.append( { 
-                                                "txtdata" : txtdata,
-                                                "tag" : line_tokens[1], 
-                                                "start" : int(line_tokens[2]),
-                                                "end" : int(line_tokens[3]),
-                                                "span" : txtdata[int(line_tokens[2]) : int(line_tokens[3])]
-                                                } )
-                        except ValueError:
-                            pass # Все неподходящие сущности
+                        if line_tokens[1] in tags:
+                            try:
+                                file_entities.append( { 
+                                                    "txtdata" : txtdata,
+                                                    "tag" : line_tokens[1], 
+                                                    "start" : int(line_tokens[2]),
+                                                    "end" : int(line_tokens[3]),
+                                                    "span" : txtdata[int(line_tokens[2]) : int(line_tokens[3])]
+                                                    } )
+                            except ValueError:
+                                pass # Все неподходящие сущности
 
                 annfile.close()
 
@@ -124,110 +127,130 @@ for tag, entities in tag_to_spans.items():
 
     span_set = sorted(list(set([(v[1]["span"], v[2]) for v in tag_to_spans[tag]])), key = lambda x : x[1], reverse = True)
 
+    # if tag == "DISO":
+    #     print(*[t[0] for t in tag_to_spans[tag]], sep = "\n\n")
+
     context = tag_to_spans[tag][0][0]
     full_query = context
     # for n in range(10):
     #     full_query += " [SEP] " + span_set[n][0] + " - это " + tag + "."
     tag_to_spans[tag] = full_query
-    # print(f"{tag} : {tag_to_spans[tag]}")    
+    # print(f"{tag} : {tag_to_spans[tag]}")
 
-entities = [] 
+sets = ["train", "dev", "test"]
 
-for ad, dirs, files in os.walk(dataset_path):
-    for f in files:
+for ds in sets:
 
-        if f[-4:] == '.ann':
-            try:
+    print(ds + " set:")
 
-                if os.stat(dataset_path + '/' + f).st_size == 0:
-                    continue
+    jsonpath = os.path.join(mrcjson_output_path, ds + ".json") 
+    dataset_path = os.path.join(brat_dataset_path, ds)
 
-                annfile = open(dataset_path + '/' + f, "r", encoding='UTF-8')
-                txtfile = open(dataset_path + '/' + f[:-4] + ".txt", "r", encoding='UTF-8')
+    jsondir = os.path.dirname(jsonpath)
 
-                txtdata = txtfile.read()
-                # txtdata = txtdata.replace('\n', '.', 1) # Отделение заголовков
+    if not os.path.exists(jsondir):
+        os.makedirs(jsondir)
 
-                # Шаг 1. Считать все именованные сущности из файла, закрыть файл.
+    jsonfile = open(jsonpath, "w", encoding='UTF-8')     
 
-                file_entities = []
+    span_id = 0
+    entities = [] 
 
-                # Именованная сущность пока что будет представленна укороченной записью. Позже она будет приведена к выду выше.
+    for ad, dirs, files in os.walk(dataset_path):
+        for f in tqdm(files):
 
-                for line in annfile:
-                    line_tokens = line.split()
-                    if len(line_tokens) > 3 and len(line_tokens[0]) > 1 and line_tokens[0][0] == 'T':
-                        try:
-                            file_entities.append( { "tag" : line_tokens[1], 
-                                               "start" : int(line_tokens[2]),
-                                               "end" : int(line_tokens[3]),
-                                              } )
-                        except ValueError:
-                            pass # Все неподходящие сущности
+            if f[-4:] == '.ann':
+                try:
 
-                annfile.close()
+                    if os.stat(dataset_path + '/' + f).st_size == 0:
+                        continue
 
-                # Шаг 2. В каждом файле выделить контексты отдельно друг от друга.
+                    annfile = open(dataset_path + '/' + f, "r", encoding='UTF-8')
+                    txtfile = open(dataset_path + '/' + f[:-4] + ".txt", "r", encoding='UTF-8')
 
-                sentence_spans = ru_tokenizer.span_tokenize(txtdata)
-                for span in sentence_spans:
+                    txtdata = txtfile.read()
+                    # txtdata = txtdata.replace('\n', '.', 1) # Отделение заголовков
 
-                    start, end = span
-                    context = txtdata[start : end]
+                    # Шаг 1. Считать все именованные сущности из файла, закрыть файл.
 
-                    sentence_entities = [e for e in file_entities if e["start"] >= start and e["end"] <= end]
-                    sentence_tags = [e["tag"] for e in sentence_entities]
+                    file_entities = []
 
-                    # Шаг 3. Для каждого существующего класса генерируем пример. Если такой есть, то добавляем, иначе оставляем пустым.
+                    # Именованная сущность пока что будет представленна укороченной записью. Позже она будет приведена к выду выше.
 
-                    for tag_id, tag in enumerate(tags):
+                    for line in annfile:
+                        line_tokens = line.split()
+                        if len(line_tokens) > 3 and len(line_tokens[0]) > 1 and line_tokens[0][0] == 'T':
+                            try:
+                                file_entities.append( { "tag" : line_tokens[1], 
+                                                   "start" : int(line_tokens[2]),
+                                                   "end" : int(line_tokens[3]),
+                                                  } )
+                            except ValueError:
+                                pass # Все неподходящие сущности
 
-                        query = tag_to_spans[tag]
+                    annfile.close()
 
-                        if tag in sentence_tags:
+                    # Шаг 2. В каждом файле выделить контексты отдельно друг от друга.
 
-                            start_positions = [e["start"] - start for e in sentence_entities if e["tag"] == tag]
-                            end_positions = [e["end"] - start for e in sentence_entities if e["tag"] == tag]
+                    sentence_spans = ru_tokenizer.span_tokenize(txtdata)
+                    for span in sentence_spans:
 
-                            entity = { "id" : "{}.{}".format(span_id, tag_id), 
-                                       "context" : context,
-                                       "tag" : tag,
-                                       "query" : query,
-                                       "filename" : f[:-4],
-                                       "exists" : True,
-                                       "start_positions" : start_positions,
-                                       "end_positions" : end_positions, 
-                                       "span_positions" : ["{};{}".format(start, end) for start, end in zip(start_positions, end_positions)],
-                                       "spans" : [context[start : end] for start, end in zip(start_positions, end_positions)]
-                            }
+                        start, end = span
+                        context = txtdata[start : end]
 
-                        else:
+                        sentence_entities = [e for e in file_entities if e["start"] >= start and e["end"] <= end]
+                        sentence_tags = [e["tag"] for e in sentence_entities]
 
-                            entity = { "id" : "{}.{}".format(span_id, tag_id), 
-                                       "context" : context,
-                                       "tag" : tag,
-                                       "query" : query,
-                                       "filename" : f[:-4],
-                                       "exists" : False,
-                                       "start_positions" : [],
-                                       "end_positions" : [], 
-                                       "span_positions" : [],
-                                       "spans" : []
-                            }
-                        
-                        entities.append(entity)
+                        # Шаг 3. Для каждого существующего класса генерируем пример. Если такой есть, то добавляем, иначе оставляем пустым.
 
-                    span_id += 1 # Перейти к следующему предложению
+                        for tag_id, tag in enumerate(tags):
 
-                txtfile.close()
+                            query = tag_to_spans[tag]
 
-            except FileNotFoundError:
-                pass
+                            if tag in sentence_tags:
 
-# Шаг 4. Сохранить все сущности в json формат.
+                                start_positions = [e["start"] - start for e in sentence_entities if e["tag"] == tag]
+                                end_positions = [e["end"] - start for e in sentence_entities if e["tag"] == tag]
 
-print(f"{len(entities)} entities from {dataset_path} jsoned to {jsonpath}.")
+                                entity = { "id" : "{}.{}".format(span_id, tag_id), 
+                                           "context" : context,
+                                           "tag" : tag,
+                                           "query" : query,
+                                           "filename" : f[:-4],
+                                           "exists" : True,
+                                           "start_positions" : start_positions,
+                                           "end_positions" : end_positions, 
+                                           "span_positions" : ["{};{}".format(start, end) for start, end in zip(start_positions, end_positions)],
+                                           "spans" : [context[start : end] for start, end in zip(start_positions, end_positions)]
+                                }
 
-json.dump(entities, jsonfile, ensure_ascii = False, indent = 2)
+                            else:
 
-jsonfile.close()
+                                entity = { "id" : "{}.{}".format(span_id, tag_id), 
+                                           "context" : context,
+                                           "tag" : tag,
+                                           "query" : query,
+                                           "filename" : f[:-4],
+                                           "exists" : False,
+                                           "start_positions" : [],
+                                           "end_positions" : [], 
+                                           "span_positions" : [],
+                                           "spans" : []
+                                }
+                            
+                            entities.append(entity)
+
+                        span_id += 1 # Перейти к следующему предложению
+
+                    txtfile.close()
+
+                except FileNotFoundError:
+                    pass
+
+    # Шаг 4. Сохранить все сущности в json формат.
+
+    print(f"{len(entities)} entities from {dataset_path} jsoned to {jsonpath}.")
+
+    json.dump(entities, jsonfile, ensure_ascii = False, indent = 2)
+
+    jsonfile.close()

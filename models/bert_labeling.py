@@ -12,9 +12,12 @@ from typing import Dict
 import os
 import tqdm
 from tqdm import tqdm
+import argparse
+import logging
+from collections import namedtuple
 
 from datasets.mrc_ner_dataset import MRCNERDataset
-from datasets.truncate_dataset import TruncateDataset
+from datasets.truncate_dataset import TruncateDataset, TruncateByTypeDataset
 from datasets.mrc_ner_dataset import collate_to_max_length
 from metrics.query_span_f1 import QuerySpanF1
 from models.bert_query_ner import BertQueryNER
@@ -28,53 +31,88 @@ class BertLabeling(pl.LightningModule):
 
     def __init__(
         self,
-        model_args = None,
-        bert_args = None,
-        trainer_args = None
+        args: argparse.Namespace
     ):
         """Инициализация модели, конфига и т.п."""
         super().__init__()
+        if isinstance(args, argparse.Namespace):
+            self.save_hyperparameters(args)
+            self.args = args
+            self.eval_mode = False
+        else: 
+            # eval mode
+            self.eval_mode = True
+            TmpArgs = namedtuple("tmp_args", field_names=list(args.keys()))
+            self.args = args = TmpArgs(**args)
 
-        self.eval_mode = False
-        self.model_args = model_args
-        self.bert_args = bert_args
-        self.trainer_args = trainer_args
-        
-        self.bert_dir = model_args["bert_config_dir"]
-        self.data_dir = model_args["data_dir"]
-        
-        vocab_path = os.path.join(self.bert_dir, "vocab.txt")
-        self.tokenizer = BertWordPieceTokenizer(vocab_path, lowercase = False)
-        self.output_test_file = open("test_dataset.out", "w", encoding = "utf-8")
+        self.bert_dir = args.bert_config_dir
+        self.data_dir = args.data_dir
 
-        bert_config = BertQueryNerConfig.from_pretrained(
-            self.bert_dir,
-            hidden_dropout_prob = bert_args["bert_dropout"],
-            attention_probs_dropout_prob = bert_args["bert_dropout"],
-            mrc_dropout = model_args["mrc_dropout"]
-        )
+        bert_config = BertQueryNerConfig.from_pretrained(args.bert_config_dir,
+                                                         hidden_dropout_prob=args.bert_dropout,
+                                                         attention_probs_dropout_prob=args.bert_dropout,
+                                                         mrc_dropout=args.mrc_dropout)
 
-        self.model = BertQueryNER.from_pretrained(self.bert_dir,
+        self.model = BertQueryNER.from_pretrained(args.bert_config_dir,
                                                   config=bert_config)
-        
-        self.loss_type = model_args["loss_type"]
+
+        vocab_path = os.path.join(self.bert_dir, "vocab.txt") # важно знать, по какому словарю токенизировать
+        self.tokenizer = BertWordPieceTokenizer(vocab_path, lowercase = False)
+
+        logging.info(str(args.__dict__ if isinstance(args, argparse.ArgumentParser) else args)) # ? Зачем это?
+        self.loss_type = args.loss_type
         if self.loss_type == "bce":
             self.bce_loss = BCEWithLogitsLoss(reduction="none")
         else:
             self.dice_loss = DiceLoss(with_logits=True, smooth=args.dice_smooth)
 
         # Нормализуем
-        weight_sum = model_args["weight_start"] + model_args["weight_end"] + model_args["weight_span"]
-        self.weight_start = model_args["weight_start"] / weight_sum
-        self.weight_end = model_args["weight_end"] / weight_sum
-        self.weight_span = model_args["weight_span"] / weight_sum
+        weight_sum = args.weight_start + args.weight_end + args.weight_span
+        self.weight_start = args.weight_start / weight_sum
+        self.weight_end = args.weight_end / weight_sum
+        self.weight_span = args.weight_span / weight_sum
 
         # метрика для подсчета качества
         self.span_f1 = QuerySpanF1()
-        self.optimizer = model_args["optimizer"]
-        self.span_loss_candidates = model_args["span_loss_candidates"]
-        
-        # self.output_test_file.close()
+        self.optimizer = args.optimizer
+        self.span_loss_candidates = args.span_loss_candidates
+
+        ###
+
+        self.limit_by_type = args.limit_by_type
+
+        ###
+
+        ### cycle
+
+        # self.datacycle = args.datacycle
+
+        # self.change_factor_epnum = args.change_factor_epnum
+        # self.epochs_left_before_change = self.change_factor_epnum
+        # self.last_value = 0.0
+        # self.curr_datacycle_num = 0
+
+    @staticmethod
+    def add_model_specific_args(parent_parser):
+        parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
+        parser.add_argument("--mrc_dropout", type=float, default=0.1,
+                            help="MRC dropout rate. Default: 0.1")
+        parser.add_argument("--bert_dropout", type=float, default=0.1,
+                            help="Bert dropout rate. Default: 0.1")
+        parser.add_argument("--weight_start", type=float, default=1.0, help="Start logits weight for the loss. Default: 1.0")
+        parser.add_argument("--weight_end", type=float, default=1.0, help="End logits weight for the loss. Default: 1.0")
+        parser.add_argument("--weight_span", type=float, default=1.0, help="Span logits weight for the loss. Default: 1.0")
+        parser.add_argument("--span_loss_candidates", choices=["all", "pred_and_gold", "gold"],
+                            default="all", help="Candidates used to compute span loss. Default: \"all\"")
+        parser.add_argument("--loss_type", choices=["bce", "dice"], default="bce",
+                            help="Loss type, BCE or Dice. Default: \"bce\" ") # ?
+        parser.add_argument("--optimizer", choices=["adamw", "sgd"], default="adamw",
+                            help="Optimizer used. Default: \"adamw\"")
+        parser.add_argument("--dice_smooth", type=float, default=1e-8,
+                            help="Smooth value of dice loss. Default: 1e-8")
+        parser.add_argument("--final_div_factor", type=float, default=1e4,
+                            help="Final div factor of linear decay scheduler. Default: 1e4")
+        return parser
 
     def configure_optimizers(self):
 
@@ -86,7 +124,7 @@ class BertLabeling(pl.LightningModule):
         optimizer_grouped_parameters = [
             {
                 "params": [p for n, p in self.model.named_parameters() if not any(nd in n for nd in no_decay)],
-                "weight_decay": self.model_args["weight_decay"],
+                "weight_decay": self.args.weight_decay,
             },
             {
                 "params": [p for n, p in self.model.named_parameters() if any(nd in n for nd in no_decay)],
@@ -94,19 +132,22 @@ class BertLabeling(pl.LightningModule):
             },
         ]
         if self.optimizer == "adamw":
-            optimizer = AdamW(optimizer_grouped_parameters,
+            optimizer = torch.optim.AdamW(optimizer_grouped_parameters,
                               betas=(0.9, 0.98),  # (RoBERTa paper)
-                              lr=self.model_args["lr"],
-                              eps=self.model_args["adam_epsilon"])
+                              lr=self.args.lr,
+                              eps=self.args.adam_epsilon,)
         else:
-            optimizer = SGD(optimizer_grouped_parameters, lr=self.model_args["lr"], momentum=0.9)
+            optimizer = SGD(optimizer_grouped_parameters, lr=self.args.lr, momentum=0.9)
 
-        num_devices = self.trainer_args["gpus"] # TODO: Исправить ошибку тут
-        t_total = (len(self.train_dataloader()) // (self.model_args["accumulate_grad_batches"] * 
-                                                    num_devices) + 1) * self.trainer_args["max_epochs"]
+        num_devices = torch.cuda.device_count()
+        if num_devices == 0:
+            num_devices = 1 # cpu only
+        if self.args.accumulate_grad_batches is None:
+            self.args.accumulate_grad_batches = 1
+        t_total = (len(self.train_dataloader()) // (self.args.accumulate_grad_batches * num_devices)) * self.args.max_epochs
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer, max_lr=self.model_args["lr"], pct_start=float(self.model_args["warmup_steps"]/t_total),
-            final_div_factor=self.model_args["final_div_factor"],
+            optimizer, max_lr=self.args.lr, pct_start=float(self.args.warmup_steps/t_total),
+            final_div_factor=self.args.final_div_factor,
             total_steps=t_total, anneal_strategy='linear'
         )
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
@@ -175,6 +216,10 @@ class BertLabeling(pl.LightningModule):
         }
         tokens, token_type_ids, start_labels, end_labels, start_label_mask, end_label_mask, match_labels, sample_idx, tag_idx = batch
 
+        # print(start_labels)
+        # print(end_labels)
+        # print(match_labels)
+
         # num_tasks * [bsz, length, num_labels]
         attention_mask = (tokens != 0).long()
         start_logits, end_logits, span_logits = self(tokens, attention_mask, token_type_ids)
@@ -191,10 +236,12 @@ class BertLabeling(pl.LightningModule):
 
         total_loss = self.weight_start * start_loss + self.weight_end * end_loss + self.weight_span * match_loss
 
-        tf_board_logs[f"train_loss"] = total_loss
-        tf_board_logs[f"start_loss"] = start_loss
-        tf_board_logs[f"end_loss"] = end_loss
-        tf_board_logs[f"match_loss"] = match_loss
+        tf_board_logs["train_total_loss"] = total_loss
+        tf_board_logs["train_start_loss"] = start_loss
+        tf_board_logs["train_end_loss"] = end_loss
+        tf_board_logs["train_match_loss"] = match_loss
+
+        self.log_dict(tf_board_logs)
 
         return {'loss': total_loss, 'log': tf_board_logs}
 
@@ -203,86 +250,37 @@ class BertLabeling(pl.LightningModule):
 
         output = {}
 
-        tokens, token_type_ids, start_labels, end_labels, start_label_mask, end_label_mask, match_labels, sample_idx, tag_idx = batch
+        tokens_batch, token_type_ids, start_labels, end_labels, start_label_mask, end_label_mask, match_labels_batch, sample_ids, tag_ids = batch
 
-        attention_mask = (tokens != 0).long()
-        start_logits, end_logits, span_logits = self(tokens, attention_mask, token_type_ids)
-
-        start_loss, end_loss, match_loss = self.compute_loss(start_logits=start_logits,
-                                                             end_logits=end_logits,
-                                                             span_logits=span_logits,
-                                                             start_labels=start_labels,
-                                                             end_labels=end_labels,
-                                                             match_labels=match_labels,
-                                                             start_label_mask=start_label_mask,
-                                                             end_label_mask=end_label_mask
-                                                             )
-
-        total_loss = self.weight_start * start_loss + self.weight_end * end_loss + self.weight_span * match_loss
-
-        output[f"val_loss"] = total_loss
-        output[f"start_loss"] = start_loss
-        output[f"end_loss"] = end_loss
-        output[f"match_loss"] = match_loss
-
-        start_preds, end_preds = start_logits > 0, end_logits > 0
-        span_f1_stats = self.span_f1(start_preds=start_preds, end_preds=end_preds, match_logits=span_logits,
-                                     start_label_mask=start_label_mask, end_label_mask=end_label_mask,
-                                     match_labels=match_labels)
-        output["span_f1_stats"] = span_f1_stats
-
-        return output
-
-    def validation_epoch_end(self, outputs):
-        """"""
-        avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
-        tensorboard_logs = {'val_loss': avg_loss}
-
-        all_counts = torch.stack([x[f'span_f1_stats'] for x in outputs]).sum(0)
-        span_tp, span_fp, span_fn = all_counts
-        span_recall = span_tp / (span_tp + span_fn + 1e-10)
-        span_precision = span_tp / (span_tp + span_fp + 1e-10)
-        span_f1 = span_precision * span_recall * 2 / (span_recall + span_precision + 1e-10)
-        tensorboard_logs[f"span_precision"] = span_precision
-        tensorboard_logs[f"span_recall"] = span_recall
-        tensorboard_logs[f"span_f1"] = span_f1
-
-        return {'span_tp' : span_tp, 'span_fp' : span_fp, 'span_fn' : span_fn, 'val_loss': avg_loss, 'log': tensorboard_logs}
-
-    def test_step(self, batch, batch_idx):
-        """"""
-        
-        output = {}
-
-        tokens, token_type_ids, start_labels, end_labels, start_label_mask, end_label_mask, match_labels, sample_idx, tag_idx = batch
-
-        attention_mask = (tokens != 0).long()
-        start_logits, end_logits, span_logits = self(tokens, attention_mask, token_type_ids)
+        attention_mask = (tokens_batch != 0).long()
+        start_logits, end_logits, span_logits = self(tokens_batch, attention_mask, token_type_ids)
 
         start_loss, end_loss, match_loss = self.compute_loss(start_logits=start_logits,
                                                              end_logits=end_logits,
                                                              span_logits=span_logits,
                                                              start_labels=start_labels,
                                                              end_labels=end_labels,
-                                                             match_labels=match_labels,
+                                                             match_labels=match_labels_batch,
                                                              start_label_mask=start_label_mask,
                                                              end_label_mask=end_label_mask
                                                              )
 
         total_loss = self.weight_start * start_loss + self.weight_end * end_loss + self.weight_span * match_loss
 
-        output[f"val_loss"] = total_loss
-        output[f"start_loss"] = start_loss
-        output[f"end_loss"] = end_loss
-        output[f"match_loss"] = match_loss
+        output["val_total_loss"] = total_loss
+        output["val_start_loss"] = start_loss
+        output["val_end_loss"] = end_loss
+        output["val_match_loss"] = match_loss
+
+        self.log_dict(output)
 
         start_preds, end_preds = start_logits > 0, end_logits > 0
         span_f1_stats = self.span_f1(start_preds=start_preds, end_preds=end_preds, match_logits=span_logits,
                                      start_label_mask=start_label_mask, end_label_mask=end_label_mask,
-                                     match_labels=match_labels)
+                                     match_labels=match_labels_batch)
         output["span_f1_stats"] = span_f1_stats
-        
-        batch_size, seq_len = start_logits.size()
+
+        seq_len = tokens_batch.size(dim = 1)
 
         start_preds = start_logits > 0 
         end_preds = end_logits > 0
@@ -291,95 +289,138 @@ class BertLabeling(pl.LightningModule):
         match_preds = (match_preds
                        & start_preds.unsqueeze(-1).expand(-1, -1, seq_len)
                        & end_preds.unsqueeze(1).expand(-1, seq_len, -1))
-
+        
         match_label_mask = (start_label_mask.unsqueeze(-1).expand(-1, -1, seq_len)
                             & end_label_mask.unsqueeze(1).expand(-1, seq_len, -1))
         match_label_mask = torch.triu(match_label_mask, 0)
-        match_preds = match_label_mask & match_preds
+        match_preds_batch = match_label_mask & match_preds
         
-        example_num = 0
+        # import sys
 
-        start_preds = start_preds[example_num]
-        end_preds = end_preds[example_num]
-        match_preds = match_preds[example_num]
+        # for tokens, sample_idx, match_preds, match_labels in zip(tokens_batch, sample_ids, match_preds_batch, match_labels_batch):
+        #     tokens = tokens.tolist()
 
-        input_ids = tokens[example_num].tolist()
-        match_labels = match_labels[example_num]
+        #     start_pos_pred, end_pos_pred = torch.where(match_preds > 0)
+        #     start_pos_pred = start_pos_pred.tolist()
+        #     end_pos_pred = end_pos_pred.tolist()
 
-        start_positions, end_positions = torch.where(match_preds == True)
-        start_label_positions, end_label_positions = torch.where(match_labels > 0)
+        #     start_pos_label, end_pos_label = torch.where(match_labels > 0)
+        #     start_pos_label = start_pos_label.tolist()
+        #     end_pos_label = end_pos_label.tolist()
 
-        start_positions = start_positions.tolist()
-        end_positions = end_positions.tolist()
-        start_label_positions = start_label_positions.tolist()
-        end_label_positions = end_label_positions.tolist()
+        #     if not start_pos_pred and not start_pos_label:
+        #         continue
 
-        def pretty_print(string, length, symbol, file):
-            print (symbol *((length - len(string)) // 2) + string + symbol *((length - len(string)) // 2), file = file)
-        
-        f = self.output_test_file
-        
-        print("="*45, file = f)
-        decoded_spec = self.tokenizer.decode(input_ids, skip_special_tokens=False)
-        print(decoded_spec, file = f)
-        pretty_print("Предсказанные сущности", 45, '-', f)
-        if start_positions:
-            for pos_idx, (start, end) in enumerate(zip(start_positions, end_positions)):
-                decoded = self.tokenizer.decode(input_ids[start: end+1])
-                print(decoded, file = f)
-        else:
-            print("<Ни одной сущности не найдено.>", file = f)
-        print("-"*45, file = f)
-        pretty_print("Настоящие сущности", 45, '-', f)
-        if start_label_positions:
-            for start, end in zip(start_label_positions, end_label_positions):
-                decoded = self.tokenizer.decode(input_ids[start: end+1])
-                print(decoded, file = f)
-        else:
-            print("<Ни одной сущности не найдено.>", file = f)
-        print("-"*45, file = f)
+        #     print("="*20, file = sys.stderr)
+        #     print(f"Sample #{str(int(sample_idx))}, len = {len(tokens)}: ", self.tokenizer.decode(tokens, skip_special_tokens=False), file = sys.stderr)
+        #     print("-"*20, file = sys.stderr)
+        #     if start_pos_label:
+        #         print("True labels:", file = sys.stderr)
+        #         for start, end in zip(start_pos_label, end_pos_label):
+        #             print(f"[{start}:{end}]\t" + self.tokenizer.decode(tokens[start: end+1]), file = sys.stderr)
+        #     else:
+        #         print("No true labels.", file = sys.stderr)
+        #     if start_pos_pred:
+        #         print("Predicted labels:", file = sys.stderr)
+        #         for start, end in zip(start_pos_pred, end_pos_pred):
+        #             print(f"[{start}:{end}]\t" + self.tokenizer.decode(tokens[start: end+1]), file = sys.stderr)
+        #     else:
+        #         print("No predicted labels.", file = sys.stderr)
 
-        # print("Батч " + str(batch_idx))
-        
+        return output
+
+    def validation_epoch_end(self, outputs):
+        """"""
+        avg_loss = torch.stack([x['val_total_loss'] for x in outputs]).mean()
+        tensorboard_logs = {'val_avg_loss': avg_loss}
+
+        all_counts = torch.stack([x[f'span_f1_stats'] for x in outputs]).sum(0)
+        span_tp, span_fp, span_fn = all_counts
+        span_recall = span_tp / (span_tp + span_fn + 1e-10)
+        span_precision = span_tp / (span_tp + span_fp + 1e-10)
+        span_f1 = span_precision * span_recall * 2 / (span_recall + span_precision + 1e-10)
+        tensorboard_logs["span_tp"] = span_tp.detach().float()
+        tensorboard_logs["span_fp"] = span_fp.detach().float()
+        tensorboard_logs["span_fn"] = span_fn.detach().float()
+        tensorboard_logs["span_precision"] = span_precision.detach()
+        tensorboard_logs["span_recall"] = span_recall.detach()
+        tensorboard_logs["span_f1"] = span_f1.detach()
+
+        self.log_dict(tensorboard_logs)
+        self.log("span_f1", span_f1)
+
+        # print(f"Span F1 for epoch {self.current_epoch} is {span_f1}.")
+
+        # if self.change_factor_epnum >= 0:
+
+        #     self.epochs_left_before_change -= 1
+            
+        #     if self.epochs_left_before_change < 0 and self.last_value > span_f1:
+        #         self.curr_datacycle_num = min(15, self.curr_datacycle_num + 1)
+        #         self.epochs_left_before_change = self.change_factor_epnum
+
+        # self.last_value = span_f1
+
+        return {'val_loss': avg_loss, 'log': tensorboard_logs}
+
+    def test_step(self, batch, batch_idx):
+        """"""
         return self.validation_step(batch, batch_idx)
 
     def test_epoch_end(
         self,
         outputs
     ) -> Dict[str, Dict[str, Tensor]]:
-        """""" 
-        print("="*45, file = self.output_test_file)
-        self.output_test_file.close()
-        
+        """"""
         return self.validation_epoch_end(outputs)
 
     def train_dataloader(self) -> DataLoader:
-        return self.get_dataloader("train")
+        return self.get_dataloader("train", limit_by_type = self.limit_by_type)
 
     def val_dataloader(self):
         return self.get_dataloader("dev")
 
     def test_dataloader(self):
-        return self.get_dataloader(prefix = "test")
+        return self.get_dataloader("test")
 
-    def get_dataloader(self, prefix="train", limit: int = None, tag = None) -> DataLoader:
+    def get_dataloader(self, prefix, limit: int = None, limit_by_type = None, tag = None) -> DataLoader:
         """get training dataloader"""
-        dataset_path = os.path.join(self.data_dir, f"{prefix}.json")
-        vocab_path = os.path.join(self.bert_dir, "vocab.txt") # важно знать, по какому словарю токенизировать
-        dataset = MRCNERDataset(dataset_path=dataset_path, 
-                                tokenizer=BertWordPieceTokenizer(vocab_path, lowercase = False),
-                                max_length=self.model_args["max_length"],
+        """
+        load_mmap_dataset
+        """
+
+        limit = 10 
+        
+        dataset_path = self.data_dir
+
+        # ds = "" if self.datacycle < 0 or prefix != "train" else "_dc" + str(self.current_epoch % self.datacycle)
+
+        ds = ""
+
+        # ds = "" if prefix != "train" else "_dc" + str(self.curr_datacycle_num)
+
+        dataset = MRCNERDataset(dataset_path=os.path.join(dataset_path + ds, prefix + ".json"), 
+                                tokenizer=self.tokenizer,
+                                max_length=self.args.max_length,
                                 pad_to_maxlen=False,
                                 tag = tag # для тестирования по конкретным классам сущностей
                                 )
 
+        # print(limit)
+        # print(len(dataset))
+
         if limit is not None:
-            dataset = TruncateDataset(dataset, limit) 
+            dataset = TruncateDataset(dataset, limit)
+        elif limit_by_type is not None:
+            dataset = TruncateByTypeDataset(dataset, int(limit_by_type))
+
+        # print(len(dataset))
 
         dataloader = DataLoader(
             dataset=dataset,
-            batch_size=self.model_args["batch_size"],
-            num_workers=self.model_args["workers"],
+            batch_size=self.args.batch_size,
+            num_workers=self.args.workers,
+            persistent_workers = self.args.workers > 0,
             shuffle=True if prefix == "train" else False,
             collate_fn=collate_to_max_length
         )

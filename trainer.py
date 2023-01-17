@@ -28,7 +28,7 @@ from models.bert_labeling import BertLabeling
 from loss import *
 from utils.get_parser import get_parser
 from utils.random_seed import set_random_seed
-from utils.progress import TGProgressBar
+# from utils.progress import TGProgressBar
 import logging
 
 def main():
@@ -60,6 +60,9 @@ def main():
 
     param = ""
 
+    if args.default_root_dir is None:
+        args.default_root_dir = "."
+
     checkpoint_callback = ModelCheckpoint(
         # Директория, куда будут сохраняться чекпойнты и логи (по умолчанию корневая папка проекта)
         dirpath=os.path.join(args.default_root_dir, "ckpt"), 
@@ -71,13 +74,14 @@ def main():
         save_last = True
     )
 
-    bar = TGProgressBar()
+    # bar = TGProgressBar()
 
     # Инициализация Trainer на основе аргументов командной строки 
     # Настройка сохранения моделей через callbacks
     trainer = Trainer.from_argparse_args(
         args,
-        callbacks=[checkpoint_callback, bar],
+        callbacks=[checkpoint_callback #,bar
+        ],
         deterministic = True
     )
 
@@ -88,7 +92,7 @@ def main():
 
 if __name__ == '__main__':
 
-    import os
-    os.environ['OPENBLAS_NUM_THREADS'] = '1'
+    # import os
+    # os.environ['OPENBLAS_NUM_THREADS'] = '1'
 
     main()

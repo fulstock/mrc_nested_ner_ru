@@ -21,64 +21,111 @@ import os
 import argparse
 
 from nltk.data import load
+from nltk.tokenize import word_tokenize
+
+from collections import Counter
 
 from tqdm.auto import tqdm
-
-# import nltk
-# nltk.download('punkt')
 
 ru_tokenizer = load("tokenizers/punkt/russian.pickle") # Загрузка токенизатора для русского языка
 
 brat2mrc_parser = argparse.ArgumentParser(description = "Brat to mrc-json formatter script.")
 brat2mrc_parser.add_argument('--brat_dataset_path', type = str, required = True, help = "Path to brat dataset (with train, dev, test dirs).")
+brat2mrc_parser.add_argument('--train_dataset_path', type = str, default = None, help = "Path to train dataset, which is used for prompt generation. By default, train subset from --brat_dataset_path would be used.")
 brat2mrc_parser.add_argument('--mrcjson_output_path', type = str, default = None, help = "Path, where formatted dataset would be stored. By default, same path as in --brat_dataset_path would be used.")
+brat2mrc_parser.add_argument('--tags_file', type = str, required = True, help = "Path to <>.tags file with entity tags that would be processed.")
 
 args = brat2mrc_parser.parse_args()
 
+with open(args.tags_file, "r") as f:
+    tags = json.load(f)
+
 brat_dataset_path = args.brat_dataset_path
+
+train_dataset_path = args.train_dataset_path
+if train_dataset_path is None:
+    train_dataset_path = os.path.join(brat_dataset_path, "train")
 
 mrcjson_output_path = args.mrcjson_output_path
 if mrcjson_output_path is None:
     mrcjson_output_path = brat_dataset_path
 
-tags = [ 'AGE', 'AWARD', 'CITY', 'COUNTRY', 'CRIME', 'DATE', 'DISEASE', 'DISTRICT', 'EVENT', 'FACILITY', 
-         'FAMILY', 'IDEOLOGY', 'LANGUAGE', 'LAW', 'LOCATION', 'MONEY', 'NATIONALITY', 'NUMBER', 'ORDINAL', 
-         'ORGANIZATION', 'PERCENT', 'PERSON', 'PENALTY', 'PRODUCT', 'PROFESSION', 'RELIGION', 'STATE_OR_PROVINCE', # 'OUT', 
-         'TIME', 'WORK_OF_ART' ]
+print("Train dataset parse for prompt:")
 
-tag_to_queries = {
-     'MONEY': 'Деньги - это монеты или банкноты с указанием их стоимости, которые используются для покупки вещей, или их общая сумма.', 
-     'CRIME': 'Преступление - это действие или деятельность, противоречащая закону, или незаконная деятельность в целом.', 
-     'PENALTY': 'Наказание - мера воздействия против совершившего преступление или проступок.', 
-     'STATE_OR_PROVINCE': 'Штат или провинция - одна из областей, на которые страна или империя делятся в рамках организации своего правительства, которое часто имеет некоторый контроль над своими собственными законами.', 
-     # 'OUT': '[UNK]', 
-     'ORGANIZATION': 'Организация - это компания или другая группа людей, которые работают вместе для определенной цели.', 
-     'PRODUCT': 'Продукт - это то, что предназначено для продажи, особенно что-то произведенное в результате промышленного процесса или что-то выращенное в сельском хозяйстве.',
-     'NATIONALITY': 'Национальность - это группа людей одной расы, религии, традиций и т.д.',
-     'RELIGION': 'Религия - это вера и поклонение богу или богам или любая подобная система веры и поклонения.',
-     'DISTRICT': 'Район - это территория страны или города, имеющая фиксированные границы, которые используются для официальных целей, или имеющая особую особенность, которая отличает его от окружающих территорий.',
-     'PROFESSION': 'Профессия - это любой вид работы, требующий специальной подготовки или определенных навыков.', 
-     'LANGUAGE': 'Язык - это система общения, используемая людьми, живущими в определенной стране.',
-     'PERSON': 'Человек - мужчина, женщина или ребенок.',
-     'DATE': 'Дата - это номер дня в месяце, часто указываемый в сочетании с названием дня, месяца и года.',
-     'WORK_OF_ART': 'Произведение искусства - это предмет, созданный творцом большого мастерства.',
-     'TIME': 'Время - это часть существования, которая измеряется минутами, днями, годами и т.д., или его процесс, рассматриваемый как единое целое.',
-     'AWARD': 'Награда - это приз или денежная сумма, которую человек или организация получают за достижение.',
-     'FACILITY': 'Объект - это место, включая здания, где происходит определенная деятельность.',
-     'ORDINAL': 'Порядковый номер - это число, которое показывает положение чего-либо в списке.',
-     'DISEASE': 'Болезнь - это заболевание людей, животных, растений и т.д., вызванное инфекцией или нарушением здоровья.',
-     'IDEOLOGY': 'Идеология - это набор убеждений или принципов, особенно тех, на которых основана политическая система, партия или организация.',
-     'NUMBER': 'Число - это знак или символ, представляющий единицу, которая является частью системы подсчета и расчета.',
-     'EVENT': 'Событие - это все, что происходит, особенно что-то важное или необычное.',
-     'CHARGE': 'Обвинение - это официальное заявление полиции о том, что кто-то обвиняется в преступлении.',
-     'AGE': 'Возраст - это период времени, когда кто-то был жив или что-то существовало.',
-     'LOCATION': 'Местоположение - это место или позиция.',
-     'COUNTRY': 'Страна - это территория земли, на которой есть собственное правительство, армия и т.д.',
-     'PERCENT': 'Процент - это одна часть из каждых 100 или указанное количество чего-либо, деленное на 100.',
-     'FAMILY': 'Семья - это группа людей, связанных друг с другом, таких как мать, отец и их дети.',
-     'CITY': 'Город - это место, где живет много людей, со множеством домов, магазинов, предприятий и т.д.',
-     'LAW': 'Закон - это правило, обычно устанавливаемое правительством, которое используется для упорядочивания поведения общества.'
-}
+all_entities = []
+
+for ad, dirs, files in os.walk(train_dataset_path):
+    for f in tqdm(files):
+
+        if f[-4:] == '.ann':
+            try:
+
+                if os.stat(train_dataset_path + '/' + f).st_size == 0:
+                    continue
+
+                annfile = open(train_dataset_path + '/' + f, "r", encoding='UTF-8')
+                txtfile = open(train_dataset_path + '/' + f[:-4] + ".txt", "r", encoding='UTF-8')
+
+                txtdata = txtfile.read()
+                # txtdata = txtdata.replace('\n', '.', 1) # Отделение заголовков
+
+                # Шаг 1. Считать все именованные сущности из файла, закрыть файл.
+
+                file_entities = []
+
+                # Именованная сущность пока что будет представленна укороченной записью. Позже она будет приведена к выду выше.
+
+                for line in annfile:
+                    line_tokens = line.split()
+                    if len(line_tokens) > 3 and len(line_tokens[0]) > 1 and line_tokens[0][0] == 'T':
+                        if line_tokens[1] in tags:
+                            try:
+                                file_entities.append( { 
+                                                    "txtdata" : txtdata,
+                                                    "tag" : line_tokens[1], 
+                                                    "start" : int(line_tokens[2]),
+                                                    "end" : int(line_tokens[3]),
+                                                    "span" : txtdata[int(line_tokens[2]) : int(line_tokens[3])]
+                                                    } )
+                            except ValueError:
+                                pass # Все неподходящие сущности
+
+                annfile.close()
+
+                all_entities.extend(file_entities)
+
+            except FileNotFoundError:
+                pass
+
+tag_to_spans = {tag : [] for tag in tags}
+for entity in all_entities:
+    tag_to_spans[entity["tag"]].append(entity)
+
+for tag, entities in tag_to_spans.items():
+    ent_cont = []
+    for entity in entities:
+        txtdata = entity["txtdata"]
+        sentence_spans = ru_tokenizer.span_tokenize(txtdata)
+        for span in sentence_spans:
+            start, end = span
+            context = txtdata[start : end]
+            if entity["span"] in context and entity["start"] >= start and entity["end"] <= end:
+                context = context[ : entity["start"] - start] + \
+                    "@ " + tag + " @ " + entity["span"] + \
+                    context[entity["end"] - end : ]
+                ent_cont.append((context, entity, start, end))
+    tag_to_spans[tag] = ent_cont
+
+    span_count = [v[1]["span"] for v in ent_cont]
+    span_count = Counter(span_count)
+    tag_to_spans[tag] = [(v[0], v[1], span_count[v[1]["span"]], v[2], v[3]) for v in tag_to_spans[tag]]
+    tag_to_spans[tag] = sorted(tag_to_spans[tag], key = lambda x : x[2], reverse = True)
+
+    span_set = sorted(list(set([(v[1]["span"], v[2]) for v in tag_to_spans[tag]])), key = lambda x : x[1], reverse = True)
+
+    lex_context = tag_to_spans[tag][0][0]
+    tag_to_spans[tag] = lex_context
+    # print(f"{tag} : {tag_to_spans[tag]}")    
 
 sets = ["train", "dev", "test"]
 
@@ -86,7 +133,7 @@ for ds in sets:
 
     print(ds + " set:")
 
-    jsonpath = os.path.join(mrcjson_output_path, ds + ".json")
+    jsonpath = os.path.join(mrcjson_output_path, ds + ".json") 
     dataset_path = os.path.join(brat_dataset_path, ds)
 
     jsondir = os.path.dirname(jsonpath)
@@ -94,11 +141,10 @@ for ds in sets:
     if not os.path.exists(jsondir):
         os.makedirs(jsondir)
 
-    jsonfile = open(jsonpath, "w", encoding='UTF-8') 
-
-    entities = []
+    jsonfile = open(jsonpath, "w", encoding='UTF-8')     
 
     span_id = 0
+    entities = []
 
     for ad, dirs, files in os.walk(dataset_path):
         for f in tqdm(files):
@@ -113,6 +159,7 @@ for ds in sets:
                     txtfile = open(dataset_path + '/' + f[:-4] + ".txt", "r", encoding='UTF-8')
 
                     txtdata = txtfile.read()
+                    # txtdata = txtdata.replace('\n', '.', 1) # Отделение заголовков
 
                     # Шаг 1. Считать все именованные сущности из файла, закрыть файл.
 
@@ -148,7 +195,7 @@ for ds in sets:
 
                         for tag_id, tag in enumerate(tags):
 
-                            query = tag_to_queries[tag]
+                            query = tag_to_spans[tag]
 
                             if tag in sentence_tags:
 

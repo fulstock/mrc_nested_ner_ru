@@ -23,5 +23,7 @@ def get_parser() -> argparse.ArgumentParser:
                         help="Warmup steps used for scheduler. Default: 0")
     parser.add_argument("--adam_epsilon", default=1e-8, type=float,
                         help="Epsilon for Adam optimizer. Default: 1e-8")
+    parser.add_argument("--seed", help = "Randomizer seed for reproducibilty.")
+    parser.add_argument("--limit_by_type", default = None, help = "Entity amount limit for each class. Default: None (no limit)")
 
     return parser

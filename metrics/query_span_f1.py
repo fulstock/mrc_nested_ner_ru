@@ -1,7 +1,6 @@
 # encoding: utf-8
 
-
-from pytorch_lightning.metrics.metric import Metric
+from torchmetrics import Metric
 import torch
 
 def query_span_f1(start_preds, end_preds, match_logits, start_label_mask, end_label_mask, match_labels):
@@ -39,14 +38,30 @@ def query_span_f1(start_preds, end_preds, match_logits, start_label_mask, end_la
     tp = (match_labels & match_preds).long().sum()
     fp = (~match_labels & match_preds).long().sum()
     fn = (match_labels & ~match_preds).long().sum()
-    return torch.stack([tp, fp, fn])
+    # return torch.stack([tp, fp, fn])
+    return tp, fp, fn
 
 class QuerySpanF1(Metric):
     """
     Query Span F1
     """
     def __init__(self):
-        super(QuerySpanF1, self).__init__(name="query_span_f1")
+        super().__init__()
+        
+        self.add_state("tp", default=torch.tensor(0), dist_reduce_fx = "sum")
+        self.add_state("fp", default=torch.tensor(0), dist_reduce_fx = "sum")
+        self.add_state("fn", default=torch.tensor(0), dist_reduce_fx = "sum")
 
-    def forward(self, start_preds, end_preds, match_logits, start_label_mask, end_label_mask, match_labels):
-        return query_span_f1(start_preds, end_preds, match_logits, start_label_mask, end_label_mask, match_labels)
+    def update(self, start_preds, end_preds, match_logits, start_label_mask, end_label_mask, match_labels):
+        
+        tp, fp, fn = query_span_f1(start_preds, end_preds, match_logits, start_label_mask, end_label_mask, match_labels)
+        self.tp += tp
+        self.fp += fp
+        self.fn += fn
+    
+    def compute(self):
+        
+        return torch.stack([self.tp, self.fp, self.fn])
+    
+    # def forward(self, start_preds, end_preds, match_logits, start_label_mask, end_label_mask, match_labels):
+    #    return query_span_f1(start_preds, end_preds, match_logits, start_label_mask, end_label_mask, match_labels)
